@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logistic Severe Weather Prediction</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .container {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            width: 400px;
+            text-align: center;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+        }
+
+        form {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        label {
+            font-weight: bold;
+        }
+
+        button {
+            padding: 10px;
+            background-color: #007BFF;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        #map {
+            width: 100%;
+            height: 600px;
+            margin-top: 20px;
+        }
+    </style>
+    <!-- Include Mapbox GL JS library -->
+    <link href='https://api.mapbox.com/mapbox-gl-js/v2.3.1/mapbox-gl.css' rel='stylesheet' />
+    <script src='https://api.mapbox.com/mapbox-gl-js/v2.3.1/mapbox-gl.js'></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>Logistic Severe Weather Prediction</h1>
+        <form id="prediction-form">
+            <label for="state">State:</label>
+            <select id="state" name="state">
+                <option value="Rivers">Rivers</option>
+                <option value="Kogi">Kogi</option>
+                <option value="Lagos">Lagos</option>
+                <option value="Kaduna">Kaduna</option>
+                <option value="Anambra">Anambra</option>
+                <option value="Borno">Borno</option>
+            </select>
+            <button type="submit">Predict</button>
+        </form>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+        document.getElementById('prediction-form').addEventListener('submit', function(event) {
+            event.preventDefault();
+
+            const state = document.getElementById('state').value;
+            fetchWeatherData(state).then(locations => {
+                mapboxgl.accessToken = 'pk.eyJ1Ijoiam9oZGFtMDEiLCJhIjoiY2x4dmwycmhhMXdiODJrcXdjcXd1aWx4MyJ9.HwW-ZXfWStpBK-9coc7b9g';
+                const map = new mapboxgl.Map({
+                    container: 'map',
+                    style: 'mapbox://styles/mapbox/streets-v11',
+                    center: [8.6753, 9.0820], // Centered on Nigeria
+                    zoom: 7
+                });
+
+                map.on('load', function () {
+                    fetch(`geojson/${state}.geojson`)
+                        .then(response => response.json())
+                        .then(data => {
+                            map.addSource('state-boundaries', {
+                                'type': 'geojson',
+                                'data': data
+                            });
+
+                            map.addLayer({
+                                'id': 'state-boundary',
+                                'type': 'line',
+                                'source': 'state-boundaries',
+                                'layout': {},
+                                'paint': {
+                                    'line-color': '#FF0000',
+                                    'line-width': 3
+                                }
+                            });
+                        });
+                });
+
+                locations.forEach(location => {
+                    const { latitude, longitude, population, temperature, pressure, humidity, groundLevel, windSpeed, cloud } = location;
+                    
+                    console.log('Original values:', { population, temperature, pressure, humidity, groundLevel, windSpeed, cloud });
+
+                    const normalizedPopulation = normalizeMinMax(population, 0, 1000000); // Adjust these min and max values based on your data
+                    const normalizedTemperature = normalizeMinMax(temperature, 0, 50); // Example min and max
+                    const normalizedPressure = normalizeMinMax(pressure, 900, 1100); // Example min and max
+                    const normalizedHumidity = normalizeMinMax(humidity, 0, 100); // Example min and max
+                    const normalizedGroundLevel = normalizeMinMax(groundLevel, 0, 1000); // Example min and max
+                    const normalizedWindSpeed = normalizeMinMax(windSpeed, 0, 100); // Example min and max
+                    const normalizedCloud = normalizeMinMax(cloud, 0, 100); // Example min and max
+                    const normalizedLatitude = normalizeMinMax(latitude, -90, 90); // Latitude range
+                    const normalizedLongitude = normalizeMinMax(longitude, -180, 180); // Longitude range
+
+                    console.log('Normalized values:', { normalizedPopulation, normalizedTemperature, normalizedPressure, normalizedHumidity, normalizedGroundLevel, normalizedWindSpeed, normalizedCloud, normalizedLatitude, normalizedLongitude });
+
+                    const predictionResult = predictSeverity({
+                        population: normalizedPopulation,
+                        temperature: normalizedTemperature,
+                        pressure: normalizedPressure,
+                        humidity: normalizedHumidity,
+                        groundLevel: normalizedGroundLevel,
+                        windSpeed: normalizedWindSpeed,
+                        cloud: normalizedCloud,
+                        latitude: normalizedLatitude,
+                        longitude: normalizedLongitude
+                    });
+
+                    console.log('Prediction Result:', predictionResult);
+
+                    new mapboxgl.Marker()
+                        .setLngLat([longitude, latitude])
+                        .setPopup(new mapboxgl.Popup({ offset: 25 })
+                        .setHTML(`<b>Location:</b> ${latitude}, ${longitude}<br><b>Severity:</b> <span style="font-size: 1.5em; font-weight: bold; color: ${predictionResult.severity === 'Severe' ? 'red' : 'green'};">${predictionResult.severity}</span>`))
+                        .addTo(map);
+                });
+            }).catch(error => {
+                console.error('Error fetching weather data:', error);
+            });
+        });
+
+        function normalizeMinMax(value, min, max) {
+            return (value - min) / (max - min);
+        }
+
+        function fetchWeatherData(state) {
+            return Promise.all([
+                fetch('https://raw.githubusercontent.com/josephdamilare01/Severe-weather-prediction/main/date_taken.csv'),
+                fetch('https://raw.githubusercontent.com/josephdamilare01/Severe-weather-prediction/main/Weather_condition.csv'),
+                fetch('https://raw.githubusercontent.com/josephdamilare01/Severe-weather-prediction/main/Location.csv'),
+                fetch('https://raw.githubusercontent.com/josephdamilare01/Severe-weather-prediction/main/Geography.csv')
+            ])
+            .then(responses => Promise.all(responses.map(response => response.text())))
+            .then(data => {
+                const date_taken = d3.csvParse(data[0]); // Parse date_taken.csv
+                const weather_condition = d3.csvParse(data[1]); // Parse Weather_condition.csv
+                const location = d3.csvParse(data[2]); // Parse Location.csv
+                const geography = d3.csvParse(data[3]); // Parse Geography.csv
+
+                // Combine the data based on ID_location
+                const combinedData = location.map(loc => {
+                    const geo = geography.find(g => g.ID_location === loc.ID_location);
+                    const weather = weather_condition.find(w => w.ID_location === loc.ID_location);
+                    return {
+                        ...loc,
+                        ...geo,
+                        ...weather
+                    };
+                });
+
+                return combinedData.filter(loc => loc.region === state);
+            });
+        }
+
+        function predictSeverity(inputs) {
+            const intercept = 16.8768;
+            const coefficients = {
+                population: -6.8325,
+                temperature: 14.9117,
+                pressure: -9.2941,
+                humidity: -99.9828,
+                groundLevel: -4.4546,
+                windSpeed: -5.3948,
+                cloud: 0.3514,
+                latitude: 8.5271,
+                longitude: -3.2053
+            };
+
+            const score = intercept +
+                          coefficients.population * inputs.population +
+                          coefficients.temperature * inputs.temperature +
+                          coefficients.pressure * inputs.pressure +
+                          coefficients.humidity * inputs.humidity +
+                          coefficients.groundLevel * inputs.groundLevel +
+                          coefficients.windSpeed * inputs.windSpeed +
+                          coefficients.cloud * inputs.cloud +
+                          coefficients.latitude * inputs.latitude +
+                          coefficients.longitude * inputs.longitude;
+
+            const probability = 1 / (1 + Math.exp(-score));
+            const severity = probability > 0.5 ? 'Severe' : 'Not Severe';
+
+            return { severity };
+        }
+
+        function getRandomValue(min, max) {
+            return Math.random() * (max - min) + min;
+        }
+    </script>
+</body>
+</html>
